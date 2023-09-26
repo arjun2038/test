@@ -1,42 +1,60 @@
-stages:
-  - test
-  
-trivy:
-  stage: test
-  image: docker:stable
-  services:
-    - name: docker:dind
-      entrypoint: ["env", "-u", "DOCKER_HOST"]
-      command: ["dockerd-entrypoint.sh"]
-  variables:
-    DOCKER_HOST: tcp://192.168.0.220:4241/
-    DOCKER_DRIVER: overlay2
-    # See https://github.com/docker-library/docker/pull/166
-    DOCKER_TLS_CERTDIR: ""
-    IMAGE: trivy-ci-test:$CI_COMMIT_SHA
-    TRIVY_NO_PROGRESS: "true"
-    TRIVY_CACHE_DIR: ".trivycache/"
-  before_script:
-    - export TRIVY_VERSION=$(wget -qO - "https://api.github.com/repos/aquasecurity/trivy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-    - echo $TRIVY_VERSION
-    - wget --no-verbose https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -O - | tar -zxvf -
-  allow_failure: false
-  script:
-    # Build image
-    - docker build -t $IMAGE .
-    # Build report
-    - ./trivy image --exit-code 0 --format template --template "@contrib/gitlab.tpl" -o gl-container-scanning-report.json $IMAGE
-    # Print report
-    - ./trivy image --exit-code 0 --severity HIGH $IMAGE
-    # Fail on severe vulnerabilities
-    - ./trivy image --exit-code 1 --severity CRITICAL $IMAGE
-  cache:
-    paths:
-      - .trivycache/
-  # Enables https://docs.gitlab.com/ee/user/application_security/container_scanning/ (Container Scanning report is available on GitLab EE Ultimate or GitLab.com Gold)
-  artifacts:
-    reports:
-      container_scanning: gl-container-scanning-report.json
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/ee/development/cicd/templates.html
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Python.gitlab-ci.yml
 
-  only:
-  - develop_vulner
+# Official language image. Look for the different tagged releases at:
+# https://hub.docker.com/r/library/python/tags/
+image: python:latest
+
+# Change pip's cache directory to be inside the project directory since we can
+# only cache local items.
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+# Pip's cache doesn't store the python packages
+# https://pip.pypa.io/en/stable/topics/caching/
+#
+# If you want to also cache the installed packages, you have to install
+# them in a virtualenv and cache it as well.
+cache:
+  paths:
+    - .cache/pip
+    - venv/
+
+before_script:
+  - python --version ; pip --version  # For debugging
+  - pip install virtualenv
+  - virtualenv venv
+  - source venv/bin/activate
+
+test:
+  script:
+    - pip install ruff tox  # you can also use tox
+    - pip install --editable ".[test]"
+    - tox -e py,ruff
+
+run:
+  script:
+    - pip install .
+    # run the command here
+  artifacts:
+    paths:
+      - build/*
+
+pages:
+  script:
+    - pip install sphinx sphinx-rtd-theme
+    - cd doc
+    - make html
+    - mv build/html/ ../public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:
+  stage: deploy
+  script: echo "Define your deployment script!"
+  environment: production
